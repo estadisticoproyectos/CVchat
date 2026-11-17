@@ -1,7 +1,5 @@
 streamlit
-google-genai
 pymupdf
+google-genai
 scikit-learn
-pandas
-supabase
-python-docx
+psycopg2-binary
