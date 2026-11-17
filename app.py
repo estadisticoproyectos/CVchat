@@ -458,3 +458,22 @@ if st.session_state.etapa_completada >= 2:
             )
             st.text_area(
                 "Vista previa del contenido optimizado:",
+                value=st.session_state.cv_mejorado,
+                height=350,
+            )
+
+            contenido_html = generar_archivo_html(st.session_state.cv_mejorado)
+
+            st.download_button(
+                label="📥 Descargar CV Reforzado en HTML (.html)",
+                data=contenido_html,
+                file_name="CV_Reforzado_Optimizado.html",
+                mime="text/html",
+                type="primary",
+                on_click=registrar_descarga,
+            )
+
+            if st.session_state.descarga_realizada:
+                st.success(
+                    f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}` en `{st.session_state.tiempo_sesion_segundos} segundos`."
+                )
