@@ -4,3 +4,4 @@ pymupdf
 scikit-learn
 pandas
 supabase
+python-docx
