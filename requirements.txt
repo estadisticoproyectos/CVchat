@@ -1,0 +1,6 @@
+streamlit
+google-genai
+pymupdf
+scikit-learn
+pandas
+supabase
