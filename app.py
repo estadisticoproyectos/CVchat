@@ -14,10 +14,10 @@ import json
 import datetime
 import streamlit as st
 import fitz  # PyMuPDF para leer PDFs
+import psycopg2
 from google import genai
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from supabase import create_client
 
 # Configuración de la página
 st.set_page_config(
@@ -274,7 +274,7 @@ def generar_archivo_html(texto_cv_mejorado):
 
 
 def registrar_descarga():
-    """Callback que registra la descarga, calcula el tiempo total de sesión y envía a Supabase."""
+    """Registra la analítica conectándose directamente a la base de datos PostgreSQL de Supabase."""
     st.session_state.descarga_realizada = True
     st.session_state.timestamp_descarga = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -284,31 +284,54 @@ def registrar_descarga():
         st.session_state.tiempo_sesion_segundos = round(tiempo_transcurrido.total_seconds(), 2)
 
     try:
-        url_supa = st.secrets.get("SUPABASE_URL")
-        key_supa = st.secrets.get("SUPABASE_KEY")
+        vars_ds = st.session_state.get("variables_cv", {})
 
-        if url_supa and key_supa:
-            supabase = create_client(url_supa, key_supa)
-            vars_ds = st.session_state.get("variables_cv", {})
+        # Conexión directa a PostgreSQL usando tus credenciales de Supabase
+        conexion = psycopg2.connect(
+            host="aws-1-ca-central-1.pooler.supabase.com",
+            port=6543,
+            user="postgres.rajtibjwrjimfcwsnpml",
+            password="cvchatbot2026",
+            database="postgres"
+        )
+        cursor = conexion.cursor()
 
-            supabase.table("analiticas_avanzadas_cv").insert({
-                "puesto_objetivo": vars_ds.get("puesto_objetivo"),
-                "nivel_jerarquico": vars_ds.get("nivel_jerarquico"),
-                "edad": vars_ds.get("edad"),
-                "busqueda_primera_vez": vars_ds.get("busqueda_primera_vez"),
-                "nivel_educativo_maximo": vars_ds.get("nivel_educativo_maximo"),
-                "experiencia_total_anios": vars_ds.get("experiencia_total_anios"),
-                "porcentaje_afinidad": st.session_state.porcentaje_afinidad,
-                "afinidad_habilidades": st.session_state.afinidad_secciones.get("Habilidades / Stack Tecnológico"),
-                "afinidad_experiencia": st.session_state.afinidad_secciones.get("Experiencia Laboral"),
-                "afinidad_educacion": st.session_state.afinidad_secciones.get("Educación y Formación"),
-                "modelo_utilizado": modelo_gemini,
-                "descarga_realizada": True,
-                "timestamp_descarga": st.session_state.timestamp_descarga,
-                "tiempo_sesion_segundos": st.session_state.tiempo_sesion_segundos
-            }).execute()
+        query = """
+            INSERT INTO public.analiticas_avanzadas_cv (
+                puesto_objetivo, nivel_jerarquico, edad, busqueda_primera_vez,
+                nivel_educativo_maximo, experiencia_total_anios, porcentaje_afinidad,
+                afinidad_habilidades, afinidad_experiencia, afinidad_educacion,
+                modelo_utilizado, descarga_realizada, timestamp_descarga, tiempo_sesion_segundos
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        """
+
+        valores = (
+            vars_ds.get("puesto_objetivo"),
+            vars_ds.get("nivel_jerarquico"),
+            vars_ds.get("edad"),
+            vars_ds.get("busqueda_primera_vez"),
+            vars_ds.get("nivel_educativo_maximo"),
+            vars_ds.get("experiencia_total_anios"),
+            st.session_state.porcentaje_afinidad,
+            st.session_state.afinidad_secciones.get("Habilidades / Stack Tecnológico"),
+            st.session_state.afinidad_secciones.get("Experiencia Laboral"),
+            st.session_state.afinidad_secciones.get("Educación y Formación"),
+            modelo_gemini,
+            True,
+            st.session_state.timestamp_descarga,
+            st.session_state.tiempo_sesion_segundos
+        )
+
+        cursor.execute(query, valores)
+        conexion.commit()
+
+        cursor.close()
+        conexion.close()
+
+        st.success("✅ ¡Analítica y tiempo de sesión guardados exitosamente directo en Supabase!")
+
     except Exception as e:
-        print(f"Error al registrar en Supabase: {e}")
+        st.error(f"❌ Error al conectar o insertar en la BD PostgreSQL: {e}")
 
 
 # --- Interfaz de Usuario en Streamlit ---
@@ -335,19 +358,16 @@ if st.button("Iniciar Evaluación Progresiva", type="primary"):
         if not texto_extraido.strip():
             st.warning("El PDF parece estar vacío o protegido. Intenta con otro archivo.")
         else:
-            # Registrar marca de tiempo de inicio para calcular duración de sesión
             st.session_state.timestamp_inicio = datetime.datetime.now(datetime.timezone.utc)
             st.session_state.texto_cv = texto_extraido
             st.session_state.descripcion_trabajo = descripcion_trabajo
 
-            # Calcular afinidad local
             global_score, secciones_score = calcular_similitud_tfidf(
                 texto_extraido, descripcion_trabajo
             )
             st.session_state.porcentaje_afinidad = global_score
             st.session_state.afinidad_secciones = secciones_score
 
-            # Extraer variables avanzadas para Ciencia de Datos mediante IA
             with st.spinner("Extrayendo perfil del candidato..."):
                 st.session_state.variables_cv = extraer_variables_ciencia_datos(
                     texto_extraido, descripcion_trabajo, modelo_gemini
@@ -438,22 +458,3 @@ if st.session_state.etapa_completada >= 2:
             )
             st.text_area(
                 "Vista previa del contenido optimizado:",
-                value=st.session_state.cv_mejorado,
-                height=350,
-            )
-
-            contenido_html = generar_archivo_html(st.session_state.cv_mejorado)
-
-            st.download_button(
-                label="📥 Descargar CV Reforzado en HTML (.html)",
-                data=contenido_html,
-                file_name="CV_Reforzado_Optimizado.html",
-                mime="text/html",
-                type="primary",
-                on_click=registrar_descarga,
-            )
-
-            if st.session_state.descarga_realizada:
-                st.success(
-                    f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}` en `{st.session_state.tiempo_sesion_segundos} segundos`."
-                )
