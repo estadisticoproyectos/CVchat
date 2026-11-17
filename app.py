@@ -34,7 +34,8 @@ def extraer_texto_pdf(uploaded_file):
 
 def calcular_similitud_tfidf(texto_cv, texto_oferta):
     """Calcula la similitud de Coseno básica entre el CV y la oferta laboral."""
-    vectorizer = TfidfVectorizer(stop_words="spanish")
+    # Se inicializa el vectorizador sin stop_words personalizadas para evitar errores en scikit-learn
+    vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform([texto_cv, texto_oferta])
     similitud = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
     return round(similitud * 100, 2)
