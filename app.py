@@ -17,12 +17,14 @@ st.set_page_config(
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 modelo_gemini = st.secrets.get("GEMINI_MODEL") or os.environ.get("GEMINI_MODEL")
 
+# Blindaje contra errores de tipo lista en TOML/Secrets
+if isinstance(modelo_gemini, list):
+    modelo_gemini = modelo_gemini[0]
+elif not modelo_gemini:
+    modelo_gemini = "gemini-3.8-flash"
+
 if not api_key:
     st.error("⚠️ Falta configurar `GEMINI_API_KEY` en los Secrets de Streamlit.")
-    st.stop()
-
-if not modelo_gemini:
-    st.error("⚠️ Falta configurar `GEMINI_MODEL` en los Secrets de Streamlit (ej. `gemini-3.8-flash`).")
     st.stop()
 
 client = genai.Client(api_key=api_key)
@@ -60,7 +62,11 @@ def calcular_similitud_tfidf(texto_cv, texto_oferta):
 
 
 def analizar_y_mejorar_cv(texto_cv, texto_oferta, modelo):
-    """Genera diagnóstico de mejoras y una versión reescrita y reforzada del CV."""
+    """Genera diagnóstico de mejoras y una versión reescrita y reforzada del CV con respaldo automático."""
+    modelos_a_probar = [modelo, "gemini-3.5-flash-lite"]
+    # Eliminar duplicados manteniendo el orden
+    modelos_a_probar = list(dict.fromkeys([str(m).strip() for m in modelos_a_probar if m]))
+
     prompt_diagnostico = f"""
     Actúa como un Reclutador Técnico experto y Especialista en Recursos Humanos.
     Analiza el siguiente Currículum Vitae en relación con la Descripción del Trabajo proporcionada.
@@ -100,8 +106,27 @@ def analizar_y_mejorar_cv(texto_cv, texto_oferta, modelo):
     ---
     """
 
-    resp_diag = client.models.generate_content(model=modelo, contents=prompt_diagnostico)
-    resp_cv = client.models.generate_content(model=modelo, contents=prompt_reescritura)
+    resp_diag = None
+    resp_cv = None
+    ultimo_error = None
+
+    for modelo_actual in modelos_a_probar:
+        try:
+            resp_diag = client.models.generate_content(
+                model=modelo_actual, contents=prompt_diagnostico
+            )
+            resp_cv = client.models.generate_content(
+                model=modelo_actual, contents=prompt_reescritura
+            )
+            if resp_diag and resp_cv:
+                break
+        except Exception as e:
+            ultimo_error = e
+            continue
+
+    if not resp_diag or not resp_cv:
+        raise Exception(f"No se pudo completar con los modelos disponibles. Último error: {ultimo_error}")
+
     return resp_diag.text, resp_cv.text
 
 
@@ -145,7 +170,7 @@ def registrar_descarga():
 # --- Interfaz de Usuario en Streamlit ---
 st.title("🚀 Optimiza tu CV con Inteligencia Artificial y Minería de Texto")
 st.markdown(
-    "Sube tu CV en formato PDF, pega la oferta laboral, evalúa tu afinidad y descarga una versión reforzada lista para postular."
+    "Sube tu CV en formato PDF, pega la oferta laboral, evalúa tu **porcentaje de afinidad**, revisa las **observaciones de IA** y descarga tu **CV reforzado**."
 )
 
 col1, col2 = st.columns(2)
@@ -160,21 +185,24 @@ with col2:
         "Pega aquí la descripción del puesto de trabajo", height=200
     )
 
-if st.button("Analizar y Generar CV Reforzado", type="primary"):
+if st.button("Analizar Afinidad y Generar CV Reforzado", type="primary"):
     if archivo_pdf is not None and descripcion_trabajo.strip() != "":
-        with st.spinner("Extrayendo texto, calculando afinidad y redactando CV reforzado..."):
+        with st.spinner("Extrayendo texto, calculando porcentaje de afinidad y redactando CV reforzado..."):
             texto_cv = extraer_texto_pdf(archivo_pdf)
 
             if not texto_cv.strip():
                 st.warning("El PDF parece estar vacío o protegido. Intenta con otro archivo.")
             else:
                 try:
+                    # 1. Cálculo cuantitativo de afinidad (Similitud de Coseno TF-IDF)
                     afinidad = calcular_similitud_tfidf(texto_cv, descripcion_trabajo)
+                    
+                    # 2. Análisis cualitativo y generación de CV reforzado con Gemini
                     diagnostico, cv_opt = analizar_y_mejorar_cv(
                         texto_cv, descripcion_trabajo, modelo_gemini
                     )
 
-                    # Guardar en session_state para persistir tras recargas de botones
+                    # Guardar todo en session_state
                     st.session_state.analisis_realizado = True
                     st.session_state.porcentaje_afinidad = afinidad
                     st.session_state.feedback_ia = diagnostico
@@ -192,45 +220,48 @@ if st.session_state.analisis_realizado:
     st.markdown("---")
     st.subheader("📊 Resultados del Análisis")
 
+    # 1. Métricas principales: Afinidad + Seguimiento de descarga
     col_m1, col_m2 = st.columns(2)
     with col_m1:
         st.metric(
-            label="Índice de Similitud Léxica (Afinidad Base)",
+            label="🎯 Porcentaje de Afinidad (Similitud Léxica TF-IDF)",
             value=f"{st.session_state.porcentaje_afinidad}%",
         )
     with col_m2:
         estado_descarga = "✅ Descargado" if st.session_state.descarga_realizada else "⏳ Pendiente de descarga"
         st.metric(
-            label="Métrica de Conversión (Seguimiento de Descarga)",
+            label="📥 Estado del CV Reforzado (Métrica Supabase)",
             value=estado_descarga,
         )
 
-    tab1, tab2 = st.tabs(["💡 Diagnóstico y Mejoras", "📄 CV Reforzado (Listo para Descargar)"])
+    # 2. Observaciones y Recomendaciones del Reclutador IA
+    st.markdown("### 💡 Observaciones y Recomendaciones de Gemini AI")
+    st.markdown(st.session_state.feedback_ia)
 
-    with tab1:
-        st.markdown(st.session_state.feedback_ia)
+    st.markdown("---")
 
-    with tab2:
-        st.info("Este borrador integra las palabras clave de la oferta y verbos de impacto manteniendo tu experiencia real.")
-        st.text_area(
-            "Vista previa del CV Reforzado:",
-            value=st.session_state.cv_mejorado,
-            height=400,
+    # 3. CV Reforzado y Descarga en Word
+    st.markdown("### 📄 Tu CV Reforzado (Optimizado para ATS)")
+    st.info("Este borrador integra las palabras clave de la oferta y verbos de impacto manteniendo tu experiencia real.")
+    
+    st.text_area(
+        "Vista previa del contenido optimizado:",
+        value=st.session_state.cv_mejorado,
+        height=350,
+    )
+
+    archivo_docx = generar_archivo_docx(st.session_state.cv_mejorado)
+
+    st.download_button(
+        label="📥 Descargar CV Reforzado en Word (.docx)",
+        data=archivo_docx,
+        file_name="CV_Reforzado_Optimizado.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        type="primary",
+        on_click=registrar_descarga,
+    )
+
+    if st.session_state.descarga_realizada:
+        st.success(
+            f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}`."
         )
-
-        # Preparar archivo Word (.docx)
-        archivo_docx = generar_archivo_docx(st.session_state.cv_mejorado)
-
-        st.download_button(
-            label="📥 Descargar CV Reforzado en Word (.docx)",
-            data=archivo_docx,
-            file_name="CV_Reforzado_Optimizado.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            type="primary",
-            on_click=registrar_descarga,
-        )
-
-        if st.session_state.descarga_realizada:
-            st.success(
-                f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}`."
-            )
