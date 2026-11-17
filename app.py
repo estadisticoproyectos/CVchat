@@ -10,12 +10,14 @@ Original file is located at
 import os
 import io
 import time
+import json
 import datetime
 import streamlit as st
 import fitz  # PyMuPDF para leer PDFs
 from google import genai
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from supabase import create_client
 
 # Configuración de la página
 st.set_page_config(
@@ -45,10 +47,13 @@ defaults = {
     "descripcion_trabajo": "",
     "porcentaje_afinidad": 0.0,
     "afinidad_secciones": {},
+    "variables_cv": {},
     "feedback_ia": "",
     "cv_mejorado": "",
     "descarga_realizada": False,
+    "timestamp_inicio": None,
     "timestamp_descarga": None,
+    "tiempo_sesion_segundos": 0.0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -116,6 +121,41 @@ def llamar_gemini_con_respaldo(prompt, modelo_principal):
                     break
 
     raise Exception(f"Todos los modelos fallaron o siguen saturados. Último error: {ultimo_error}")
+
+
+def extraer_variables_ciencia_datos(texto_cv, texto_oferta, modelo):
+    """Extrae metadatos y variables estructuradas para análisis de datos y perfilamiento."""
+    prompt_variables = f"""
+    Analiza el siguiente Currículum Vitae y la Descripción del Trabajo para extraer métricas clave.
+    Responde estrictamente en formato JSON válido con las siguientes claves:
+    - "puesto_objetivo": (string, título del puesto al que postula o el rol principal detectado)
+    - "nivel_jerarquico": (string, ej: Junior, Semi-Senior, Senior, Lead)
+    - "edad": (entero o null si no se deduce)
+    - "busqueda_primera_vez": (booleano true/false, si es su primer empleo formal)
+    - "nivel_educativo_maximo": (string, ej: Licenciatura, Maestría, Doctorado, Técnico, Secundaria)
+    - "experiencia_total_anios": (número decimal con los años totales de experiencia laboral estimada)
+
+    ---
+    OFERTA:
+    {texto_oferta}
+    ---
+    CV:
+    {texto_cv}
+    ---
+    """
+    try:
+        respuesta = llamar_gemini_con_respaldo(prompt_variables, modelo)
+        limpio = respuesta.replace("```json", "").replace("```", "").strip()
+        return json.loads(limpio)
+    except Exception:
+        return {
+            "puesto_objetivo": "No especificado",
+            "nivel_jerarquico": "No especificado",
+            "edad": None,
+            "busqueda_primera_vez": False,
+            "nivel_educativo_maximo": "No especificado",
+            "experiencia_total_anios": 0.0
+        }
 
 
 def generar_diagnostico_ia(texto_cv, texto_oferta, modelo):
@@ -234,13 +274,41 @@ def generar_archivo_html(texto_cv_mejorado):
 
 
 def registrar_descarga():
-    """Callback que se ejecuta en el instante en que el usuario hace clic en descargar."""
+    """Callback que registra la descarga, calcula el tiempo total de sesión y envía a Supabase."""
     st.session_state.descarga_realizada = True
     st.session_state.timestamp_descarga = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    # -------------------------------------------------------------------------
-    # PUNTO DE CONEXIÓN PARA SUPABASE (Métrica de conversión/descarga):
-    # Aquí podrás ejecutar tu inserción hacia Supabase usando las variables guardadas.
-    # -------------------------------------------------------------------------
+
+    # Calcular tiempo transcurrido en segundos desde el inicio del análisis
+    if st.session_state.timestamp_inicio:
+        tiempo_transcurrido = datetime.datetime.now(datetime.timezone.utc) - st.session_state.timestamp_inicio
+        st.session_state.tiempo_sesion_segundos = round(tiempo_transcurrido.total_seconds(), 2)
+
+    try:
+        url_supa = st.secrets.get("SUPABASE_URL")
+        key_supa = st.secrets.get("SUPABASE_KEY")
+
+        if url_supa and key_supa:
+            supabase = create_client(url_supa, key_supa)
+            vars_ds = st.session_state.get("variables_cv", {})
+
+            supabase.table("analiticas_avanzadas_cv").insert({
+                "puesto_objetivo": vars_ds.get("puesto_objetivo"),
+                "nivel_jerarquico": vars_ds.get("nivel_jerarquico"),
+                "edad": vars_ds.get("edad"),
+                "busqueda_primera_vez": vars_ds.get("busqueda_primera_vez"),
+                "nivel_educativo_maximo": vars_ds.get("nivel_educativo_maximo"),
+                "experiencia_total_anios": vars_ds.get("experiencia_total_anios"),
+                "porcentaje_afinidad": st.session_state.porcentaje_afinidad,
+                "afinidad_habilidades": st.session_state.afinidad_secciones.get("Habilidades / Stack Tecnológico"),
+                "afinidad_experiencia": st.session_state.afinidad_secciones.get("Experiencia Laboral"),
+                "afinidad_educacion": st.session_state.afinidad_secciones.get("Educación y Formación"),
+                "modelo_utilizado": modelo_gemini,
+                "descarga_realizada": True,
+                "timestamp_descarga": st.session_state.timestamp_descarga,
+                "tiempo_sesion_segundos": st.session_state.tiempo_sesion_segundos
+            }).execute()
+    except Exception as e:
+        print(f"Error al registrar en Supabase: {e}")
 
 
 # --- Interfaz de Usuario en Streamlit ---
@@ -267,17 +335,29 @@ if st.button("Iniciar Evaluación Progresiva", type="primary"):
         if not texto_extraido.strip():
             st.warning("El PDF parece estar vacío o protegido. Intenta con otro archivo.")
         else:
+            # Registrar marca de tiempo de inicio para calcular duración de sesión
+            st.session_state.timestamp_inicio = datetime.datetime.now(datetime.timezone.utc)
             st.session_state.texto_cv = texto_extraido
             st.session_state.descripcion_trabajo = descripcion_trabajo
+
+            # Calcular afinidad local
             global_score, secciones_score = calcular_similitud_tfidf(
                 texto_extraido, descripcion_trabajo
             )
             st.session_state.porcentaje_afinidad = global_score
             st.session_state.afinidad_secciones = secciones_score
+
+            # Extraer variables avanzadas para Ciencia de Datos mediante IA
+            with st.spinner("Extrayendo perfil del candidato..."):
+                st.session_state.variables_cv = extraer_variables_ciencia_datos(
+                    texto_extraido, descripcion_trabajo, modelo_gemini
+                )
+
             st.session_state.feedback_ia = ""
             st.session_state.cv_mejorado = ""
             st.session_state.descarga_realizada = False
             st.session_state.timestamp_descarga = None
+            st.session_state.tiempo_sesion_segundos = 0.0
             st.session_state.etapa_completada = 1
     else:
         st.warning("⚠️ Por favor, sube un archivo PDF y escribe la descripción del trabajo antes de iniciar.")
@@ -375,5 +455,5 @@ if st.session_state.etapa_completada >= 2:
 
             if st.session_state.descarga_realizada:
                 st.success(
-                    f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}`."
+                    f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}` en `{st.session_state.tiempo_sesion_segundos} segundos`."
                 )
