@@ -7,6 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/1pds5khrYiIpF1xMrfHuCu_qc3hp9I4Aw
 """
 
+# -*- coding: utf-8 -*-
 import os
 import io
 import time
@@ -274,7 +275,7 @@ def generar_archivo_html(texto_cv_mejorado):
 
 
 def registrar_descarga():
-    """Registra la analítica conectándose directamente a la base de datos PostgreSQL de Supabase."""
+    """Registra la analítica conectándose directamente a PostgreSQL usando los Secrets de Streamlit."""
     st.session_state.descarga_realizada = True
     st.session_state.timestamp_descarga = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -286,13 +287,16 @@ def registrar_descarga():
     try:
         vars_ds = st.session_state.get("variables_cv", {})
 
-        # Conexión directa a PostgreSQL usando tus credenciales de Supabase
+        # Leer credenciales de la BD de forma segura desde los Secrets
+        db_config = st.secrets["postgres"]
+
         conexion = psycopg2.connect(
-            host="aws-1-ca-central-1.pooler.supabase.com",
-            port=6543,
-            user="postgres.rajtibjwrjimfcwsnpml",
-            password="cvchatbot2026",
-            database="postgres"
+            host=db_config["host"],
+            port=db_config["port"],
+            user=db_config["user"],
+            password=db_config["password"],
+            database=db_config["database"],
+            sslmode="require"
         )
         cursor = conexion.cursor()
 
@@ -328,7 +332,7 @@ def registrar_descarga():
         cursor.close()
         conexion.close()
 
-        st.success("✅ ¡Analítica y tiempo de sesión guardados exitosamente directo en Supabase!")
+        st.success("✅ ¡Analítica y tiempo de sesión guardados exitosamente en Supabase!")
 
     except Exception as e:
         st.error(f"❌ Error al conectar o insertar en la BD PostgreSQL: {e}")
@@ -477,3 +481,8 @@ if st.session_state.etapa_completada >= 2:
                 st.success(
                     f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}` en `{st.session_state.tiempo_sesion_segundos} segundos`."
                 )
+
+<ElicitationsGroup message="¿Necesitas ayuda con algún otro detalle de configuración?">
+  <Elicitation label="Verificar formato de secrets.toml" query="¿Cómo debe verse exactamente el archivo secrets.toml local para las pruebas?"/>
+  <Elicitation label="Configurar en Streamlit Cloud" query="¿Cómo agrego estos secretos en el panel de control de Streamlit Cloud?"/>
+</ElicitationsGroup>
