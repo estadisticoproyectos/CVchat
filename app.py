@@ -274,6 +274,27 @@ def generar_archivo_html(texto_cv_mejorado):
     return html_completo
 
 
+def probar_conexion_supabase():
+    """Prueba rápida de diagnóstico para verificar la conexión con Supabase."""
+    try:
+        db_config = st.secrets["postgres"]
+        conexion = psycopg2.connect(
+            host=db_config["host"],
+            port=db_config["port"],
+            user=db_config["user"],
+            password=db_config["password"],
+            database=db_config["database"],
+            sslmode="require"
+        )
+        cursor = conexion.cursor()
+        cursor.execute("SELECT 1;")
+        cursor.close()
+        conexion.close()
+        return True, "Conexión a Supabase establecida correctamente."
+    except Exception as e:
+        return False, str(e)
+
+
 def registrar_descarga():
     """Registra la analítica conectándose directamente a PostgreSQL usando los Secrets de Streamlit."""
     st.session_state.descarga_realizada = True
@@ -343,6 +364,10 @@ st.title("🚀 Optimiza tu CV con Inteligencia Artificial y Minería de Texto")
 st.markdown(
     "Sube tu CV en formato PDF y pega la oferta laboral. Analizamos la **afinidad global y por secciones**, mostramos las **observaciones de la IA** y generamos tu **CV reforzado en HTML** paso a paso."
 )
+
+# Opcional: Descomenta la siguiente línea para probar el estado de conexión con Supabase en pantalla
+# exito_conn, mensaje_conn = probar_conexion_supabase()
+# st.info(f"Estado DB: {mensaje_conn}")
 
 col1, col2 = st.columns(2)
 
