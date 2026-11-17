@@ -10,14 +10,16 @@ st.set_page_config(
     page_title="Analizador y Optimizador de CV con IA", page_icon="📄", layout="wide"
 )
 
-# Inicializar cliente de Google GenAI
-# Asegúrate de configurar tu API Key en los secretos de Streamlit o variables de entorno
+# Leer credenciales y modelo exclusivamente desde los Secrets de Streamlit (o variables de entorno)
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+modelo_gemini = st.secrets.get("GEMINI_MODEL") or os.environ.get("GEMINI_MODEL")
 
 if not api_key:
-    st.error(
-        "⚠️ Falta la API Key de Gemini. Configúrala en los Secrets de Streamlit."
-    )
+    st.error("⚠️ Falta configurar `GEMINI_API_KEY` en los Secrets de Streamlit.")
+    st.stop()
+
+if not modelo_gemini:
+    st.error("⚠️ Falta configurar `GEMINI_MODEL` en los Secrets de Streamlit (ej. `gemini-3.8-flash`).")
     st.stop()
 
 client = genai.Client(api_key=api_key)
@@ -34,14 +36,13 @@ def extraer_texto_pdf(uploaded_file):
 
 def calcular_similitud_tfidf(texto_cv, texto_oferta):
     """Calcula la similitud de Coseno básica entre el CV y la oferta laboral."""
-    # Se inicializa el vectorizador sin stop_words personalizadas para evitar errores en scikit-learn
     vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform([texto_cv, texto_oferta])
     similitud = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
     return round(similitud * 100, 2)
 
 
-def analizar_cv_con_ia(texto_cv, texto_oferta):
+def analizar_cv_con_ia(texto_cv, texto_oferta, modelo):
     """Utiliza Gemini para generar recomendaciones cualitativas y de mejora."""
     prompt = f"""
     Actúa como un Reclutador Técnico experto y Especialista en Recursos Humanos.
@@ -64,7 +65,7 @@ def analizar_cv_con_ia(texto_cv, texto_oferta):
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=modelo,
             contents=prompt,
         )
         return response.text
@@ -92,10 +93,7 @@ with col2:
 
 if st.button("Analizar y Optimizar CV", type="primary"):
     if archivo_pdf is not None and descripcion_trabajo.strip() != "":
-        with st.spinner(
-            "Extrayendo texto y procesando análisis con IA..."
-        ):
-            # Extraer texto del PDF
+        with st.spinner("Extrayendo texto y procesando análisis con IA..."):
             texto_cv = extraer_texto_pdf(archivo_pdf)
 
             if not texto_cv.strip():
@@ -111,7 +109,6 @@ if st.button("Analizar y Optimizar CV", type="primary"):
                 st.markdown("---")
                 st.subheader("📊 Resultados del Análisis")
 
-                # Métrica visual
                 st.metric(
                     label="Índice de Similitud Léxica (Afinidad Base)",
                     value=f"{porcentaje_afinidad}%",
@@ -119,7 +116,9 @@ if st.button("Analizar y Optimizar CV", type="primary"):
 
                 # 2. Análisis cualitativo con IA
                 with st.spinner("Generando recomendaciones detalladas..."):
-                    feedback_ia = analizar_cv_con_ia(texto_cv, descripcion_trabajo)
+                    feedback_ia = analizar_cv_con_ia(
+                        texto_cv, descripcion_trabajo, modelo_gemini
+                    )
 
                 st.markdown("### 💡 Recomendaciones del Reclutador IA")
                 st.write(feedback_ia)
