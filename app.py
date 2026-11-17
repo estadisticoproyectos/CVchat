@@ -237,6 +237,10 @@ def registrar_descarga():
     """Callback que se ejecuta en el instante en que el usuario hace clic en descargar."""
     st.session_state.descarga_realizada = True
     st.session_state.timestamp_descarga = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # -------------------------------------------------------------------------
+    # PUNTO DE CONEXIÓN PARA SUPABASE (Métrica de conversión/descarga):
+    # Aquí podrás ejecutar tu inserción hacia Supabase usando las variables guardadas.
+    # -------------------------------------------------------------------------
 
 
 # --- Interfaz de Usuario en Streamlit ---
