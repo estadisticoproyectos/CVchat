@@ -3,7 +3,6 @@ import io
 import datetime
 import streamlit as st
 import fitz  # PyMuPDF para leer PDFs
-from docx import Document
 from google import genai
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -75,27 +74,25 @@ def calcular_similitud_tfidf(texto_cv, texto_oferta):
 
     afinidad_secciones = {}
     for nombre_sec, palabras in secciones_clave.items():
-        # Medir presencia de palabras clave de la sección en el CV vs la oferta
-        score_sec = 0.0
         coincidencias = sum(1 for p in palabras if p in texto_cv.lower())
         total_p = len(palabras)
         score_sec = round((coincidencias / total_p) * 100, 1)
-        # Asegurar un tope lógico o ponderarlo
         afinidad_secciones[nombre_sec] = min(max(score_sec + 20, 35.0), 98.0) if coincidencias > 0 else 45.0
 
     return porcentaje_global, afinidad_secciones
 
 
 def llamar_gemini_con_respaldo(prompt, modelo_principal):
-    """Ejecuta una llamada individual a Gemini con modelo de respaldo automático."""
+    """Ejecuta una llamada individual a Gemini con modelo de respaldo automático y límite de tokens para mayor velocidad."""
     modelos_a_probar = list(
-        dict.fromkeys([str(modelo_principal).strip(), "gemini-3.5-flash-lite"])
+        dict.fromkeys(["gemini-3.5-flash-lite", str(modelo_principal).strip(), "gemini-3.8-flash"])
     )
     ultimo_error = None
     for modelo_actual in modelos_a_probar:
         try:
+            config_rapida = {"max_output_tokens": 1500}
             resp = client.models.generate_content(
-                model=modelo_actual, contents=prompt
+                model=modelo_actual, contents=prompt, config=config_rapida
             )
             if resp and resp.text:
                 return resp.text
@@ -139,7 +136,7 @@ def generar_cv_reforzado_ia(texto_cv, texto_oferta, modelo):
     - Integra de forma natural las palabras clave relevantes de la oferta laboral.
     - Reescribe las responsabilidades usando verbos de acción de alto impacto y enfoque en logros.
     - Estructura el CV de manera limpia y profesional (Perfil Profesional, Experiencia Laboral, Educación, Habilidades Técnicas y Blandas).
-    - Devuelve únicamente el texto del CV reforzado listo para colocar en un documento, sin saludos ni comentarios adicionales.
+    - Devuelve únicamente el texto del CV reforzado listo para colocar en formato Markdown limpio, sin saludos ni comentarios adicionales.
 
     ---
     DESCRIPCIÓN DEL TRABAJO:
@@ -152,29 +149,73 @@ def generar_cv_reforzado_ia(texto_cv, texto_oferta, modelo):
     return llamar_gemini_con_respaldo(prompt_reescritura, modelo)
 
 
-def generar_archivo_docx(texto_cv_mejorado):
-    """Convierte el texto del CV mejorado en un archivo Word (.docx) en memoria."""
-    doc = Document()
-    doc.add_heading("Currículum Vitae Optimizado", level=1)
-    for linea in texto_cv_mejorado.split("\n"):
-        linea_limpia = linea.strip()
-        if not linea_limpia:
+def generar_archivo_html(texto_cv_mejorado):
+    """Convierte el texto markdown del CV mejorado en un documento HTML estilizado y profesional."""
+    # Convertir saltos de línea básicos o formato a HTML limpio
+    lineas = texto_cv_mejorado.split("\n")
+    html_cuerpo = ""
+    for linea in lineas:
+        l = linea.strip()
+        if not l:
             continue
-        if linea_limpia.startswith("# "):
-            doc.add_heading(linea_limpia.replace("# ", ""), level=1)
-        elif linea_limpia.startswith("## "):
-            doc.add_heading(linea_limpia.replace("## ", ""), level=2)
-        elif linea_limpia.startswith("### "):
-            doc.add_heading(linea_limpia.replace("### ", ""), level=3)
-        elif linea_limpia.startswith("- ") or linea_limpia.startswith("* "):
-            doc.add_paragraph(linea_limpia[2:], style="List Bullet")
+        if l.startswith("# "):
+            html_cuerpo += f"<h1>{l.replace('# ', '')}</h1>\n"
+        elif l.startswith("## "):
+            html_cuerpo += f"<h2>{l.replace('## ', '')}</h2>\n"
+        elif l.startswith("### "):
+            html_cuerpo += f"<h3>{l.replace('### ', '')}</h3>\n"
+        elif l.startswith("- ") or l.startswith("* "):
+            html_cuerpo += f"<li>{l[2:]}</li>\n"
         else:
-            doc.add_paragraph(linea_limpia.replace("**", ""))
+            html_cuerpo += f"<p>{l}</p>\n"
 
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    html_completo = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Currículum Vitae Optimizado</title>
+    <style>
+        body {{
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #fdfdfd;
+            border: 1px solid #eaeaea;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
+        }}
+        h1 {{
+            color: #1a365d;
+            border-bottom: 2px solid #2b6cb0;
+            padding-bottom: 8px;
+            margin-top: 0;
+        }}
+        h2 {{
+            color: #2b6cb0;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 5px;
+            margin-top: 25px;
+        }}
+        h3 {{
+            color: #2d3748;
+            margin-top: 15px;
+        }}
+        p {{
+            margin: 8px 0;
+        }}
+        li {{
+            margin-bottom: 5px;
+        }}
+    </style>
+</head>
+<body>
+    {html_cuerpo}
+</body>
+</html>
+"""
+    return html_completo
 
 
 def registrar_descarga():
@@ -186,7 +227,7 @@ def registrar_descarga():
 # --- Interfaz de Usuario en Streamlit ---
 st.title("🚀 Optimiza tu CV con Inteligencia Artificial y Minería de Texto")
 st.markdown(
-    "Sube tu CV en formato PDF y pega la oferta laboral. Analizamos la **afinidad global y por secciones**, mostramos las **observaciones de la IA** y generamos tu **CV reforzado** paso a paso."
+    "Sube tu CV en formato PDF y pega la oferta laboral. Analizamos la **afinidad global y por secciones**, mostramos las **observaciones de la IA** y generamos tu **CV reforzado en HTML** paso a paso."
 )
 
 col1, col2 = st.columns(2)
@@ -207,7 +248,6 @@ if st.button("Iniciar Evaluación Progresiva", type="primary"):
         if not texto_extraido.strip():
             st.warning("El PDF parece estar vacío o protegido. Intenta con otro archivo.")
         else:
-            # Reiniciar estado y calcular métricas cuantitativas al instante (Paso 1)
             st.session_state.texto_cv = texto_extraido
             st.session_state.descripcion_trabajo = descripcion_trabajo
             global_score, secciones_score = calcular_similitud_tfidf(
@@ -228,7 +268,7 @@ if st.session_state.etapa_completada >= 1:
     st.markdown("---")
     st.subheader("📊 Resultados del Análisis")
 
-    # ETAPA 1: Afinidad Global y por Secciones (Instantáneo)
+    # ETAPA 1: Afinidad Global y por Secciones
     col_m1, col_m2 = st.columns(2)
     with col_m1:
         st.metric(
@@ -246,7 +286,6 @@ if st.session_state.etapa_completada >= 1:
             value=estado_descarga,
         )
 
-    # Desglose de Afinidad por Secciones
     st.markdown("#### 🔍 Desglose de Afinidad por Secciones Clave")
     sec_cols = st.columns(len(st.session_state.afinidad_secciones))
     for idx, (nombre_seccion, valor_sec) in enumerate(st.session_state.afinidad_secciones.items()):
@@ -276,7 +315,7 @@ if st.session_state.etapa_completada >= 1:
     else:
         contenedor_diagnostico.markdown(st.session_state.feedback_ia)
 
-# ETAPA 3: Generación y descarga del CV Reforzado
+# ETAPA 3: Generación y descarga del CV Reforzado en HTML
 if st.session_state.etapa_completada >= 2:
     st.markdown("---")
     st.markdown("### 📄 Tu CV Reforzado (Optimizado para ATS)")
@@ -284,7 +323,7 @@ if st.session_state.etapa_completada >= 2:
 
     if st.session_state.etapa_completada == 2:
         with contenedor_cv.container():
-            with st.spinner("Redactando tu CV reforzado y preparando descarga en Word..."):
+            with st.spinner("Redactando tu CV reforzado en formato HTML..."):
                 try:
                     cv_opt = generar_cv_reforzado_ia(
                         st.session_state.texto_cv,
@@ -307,13 +346,13 @@ if st.session_state.etapa_completada >= 2:
                 height=350,
             )
 
-            archivo_docx = generar_archivo_docx(st.session_state.cv_mejorado)
+            contenido_html = generar_archivo_html(st.session_state.cv_mejorado)
 
             st.download_button(
-                label="📥 Descargar CV Reforzado en Word (.docx)",
-                data=archivo_docx,
-                file_name="CV_Reforzado_Optimizado.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                label="📥 Descargar CV Reforzado en HTML (.html)",
+                data=contenido_html,
+                file_name="CV_Reforzado_Optimizado.html",
+                mime="text/html",
                 type="primary",
                 on_click=registrar_descarga,
             )
