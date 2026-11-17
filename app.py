@@ -481,8 +481,3 @@ if st.session_state.etapa_completada >= 2:
                 st.success(
                     f"Evento registrado para analítica: descarga confirmada a las `{st.session_state.timestamp_descarga}` en `{st.session_state.tiempo_sesion_segundos} segundos`."
                 )
-
-<ElicitationsGroup message="¿Necesitas ayuda con algún otro detalle de configuración?">
-  <Elicitation label="Verificar formato de secrets.toml" query="¿Cómo debe verse exactamente el archivo secrets.toml local para las pruebas?"/>
-  <Elicitation label="Configurar en Streamlit Cloud" query="¿Cómo agrego estos secretos en el panel de control de Streamlit Cloud?"/>
-</ElicitationsGroup>
